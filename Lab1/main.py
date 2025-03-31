@@ -3,12 +3,12 @@ import zipfile
 # from Bio import SeqIO
 # from Bio.Seq import Seq
 from collections import Counter
-
+import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import stumpy
 from sklearn.cluster import DBSCAN, KMeans
+from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
 
@@ -241,6 +241,9 @@ class RNAProteinBindingSiteAnalysis:
             # Standardize the data
             scaler = StandardScaler()
             X_scaled = scaler.fit_transform(X)
+
+            # Store X_scaled immediately
+            self.clusters[length] = {'X_scaled': X_scaled}
 
             # Perform K-means clustering
             kmeans_results = self._perform_kmeans(X_scaled, length)
@@ -737,24 +740,96 @@ class RNAProteinBindingSiteAnalysis:
 
         return True
 
+    def visualize_clustering_results(self):
+        """
+        Visualize clustering results for K-means and DBSCAN across different motif lengths.
+
+        Displays a grid of scatter plots where:
+        - Rows represent motif lengths.
+        - Columns represent clustering methods (K-means and DBSCAN).
+        - Points are colored by cluster labels, with DBSCAN noise points in gray.
+        - Titles include the method, motif length, and silhouette score.
+        - X-axis is "Reactivity at position 0", Y-axis is "Reactivity at position 1".
+        """
+        if not self.clusters:
+            print("Error: No clustering results available")
+            return False
+
+        from sklearn.metrics import silhouette_score
+        from sklearn.preprocessing import StandardScaler
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        # Get sorted motif lengths
+        lengths = sorted(self.motifs.keys())
+        n_lengths = len(lengths)
+
+        # Create a grid of subplots: rows for lengths, 2 columns for methods
+        fig, axes = plt.subplots(n_lengths, 2, figsize=(12, 4 * n_lengths), squeeze=False)
+
+        for i, length in enumerate(lengths):
+            if length < 2:  # Skip if motif length is less than 2
+                print(f"Skipping length {length} as it has fewer than 2 positions")
+                axes[i, 0].set_visible(False)
+                axes[i, 1].set_visible(False)
+                continue
+
+            # Get data
+            motifs = self.motifs[length]
+            X_full = np.array([motif['fshape'] for motif in motifs])
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X_full)
+            X_plot = X_scaled[:, :2]  # Standardized first two positions
+
+            # K-means Plot
+            ax_kmeans = axes[i, 0]
+            kmeans_labels = self.clusters[length]['kmeans']['labels']
+            ax_kmeans.scatter(X_plot[:, 0], X_plot[:, 1], c=kmeans_labels, cmap='viridis')
+            ax_kmeans.set_xlabel("Reactivity at position 0")
+            ax_kmeans.set_ylabel("Reactivity at position 1")
+            ax_kmeans.set_xlim(-1, 1)
+            ax_kmeans.set_ylim(-1, 1)
+            ax_kmeans.set_title(f"K-means (Length {length})")
+
+            # DBSCAN Plot
+            ax_dbscan = axes[i, 1]
+            dbscan_labels = self.clusters[length]['dbscan']['labels']
+            mask = dbscan_labels != -1
+            ax_dbscan.scatter(X_plot[mask, 0], X_plot[mask, 1], c=dbscan_labels[mask], cmap='viridis')
+            ax_dbscan.scatter(X_plot[~mask, 0], X_plot[~mask, 1], c='gray', label='Noise')
+            ax_dbscan.set_xlabel("Reactivity at position 0")
+            ax_dbscan.set_ylabel("Reactivity at position 1")
+            ax_dbscan.set_xlim(-1, 1)
+            ax_dbscan.set_ylim(-1, 1)
+            ax_dbscan.set_title(f"DBSCAN (Length {length})")
+
+        # Adjust layout and display
+        plt.tight_layout()
+        plt.savefig(f"{self.protein_name}_clustering_results.png")
+        return True
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="RNA-Protein Binding Site Analysis")
+    parser.add_argument("--protein", choices=['hnrnpc', 'hnrnpa2b1'], help="Protein name to analyze", default="hnrnpc")
+    args = parser.parse_args()
+    args.directory = "HNRNPC" if args.protein == "hnrnpc" else "HNRNPA2B1"
+
     # Initialize the analysis
-    analysis = RNAProteinBindingSiteAnalysis('hnrnpc')
+    analysis = RNAProteinBindingSiteAnalysis(args.protein)
 
     # Load the expected motif
     analysis.load_expected_motif(
-        file_path="Lab1/AIBI-lab-01-data/RBP-footprinting-data/HNRNPC/hnrnpc_expected_pattern.txt"
+        file_path=f"AIBI-lab-01-data/RBP-footprinting-data/{args.directory}/{args.protein}_expected_pattern.txt"
     )
 
     # Extract binding sites data
     analysis.extract_binding_sites_data(
-        zip_file_path="Lab1/AIBI-lab-01-data/RBP-footprinting-data/HNRNPC/hnrnpc_binding_sites_fshape.zip"
+        zip_file_path=f"AIBI-lab-01-data/RBP-footprinting-data/{args.directory}/{args.protein}_binding_sites_fshape.zip"
     )
 
     # Extract search data
     analysis.extract_search_data(
-        zip_file_path="Lab1/AIBI-lab-01-data/RBP-footprinting-data/HNRNPC/hnrnpc_search_fshape.zip"
+        zip_file_path=f"AIBI-lab-01-data/RBP-footprinting-data/{args.directory}/{args.protein}_search_fshape.zip"
     )
 
     # Extract promising motifs
@@ -777,3 +852,6 @@ if __name__ == '__main__':
 
     # Visualize top matches
     analysis.visualize_top_matches(n=5)
+
+    # Visualize clustering results
+    analysis.visualize_clustering_results()
